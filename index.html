@@ -222,7 +222,7 @@
       padding: 20px;
       border-radius: 8px;
       width: 100%;
-      max-width: 310px;
+      max-width: 320px;
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -240,9 +240,9 @@
       background: #090e17;
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 11px;
+      padding: 10px;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 11px;
       font-family: inherit;
       cursor: pointer;
       width: 100%;
@@ -257,7 +257,6 @@
     .menu-btn.invite {
       border-color: #22c55e;
       color: #22c55e;
-      box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
     }
 
     .menu-btn:active { background: var(--vector-cyan); color: #000; }
@@ -273,6 +272,48 @@
       border-color: var(--vector-cyan);
       color: #000;
       background: var(--vector-cyan);
+    }
+
+    .room-box {
+      background: #030712;
+      border: 1px dashed var(--border);
+      padding: 8px;
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .room-code-badge {
+      font-size: 20px;
+      font-weight: bold;
+      color: var(--vector-cyan);
+      letter-spacing: 3px;
+    }
+
+    .room-input-group {
+      display: flex;
+      gap: 4px;
+      width: 100%;
+    }
+
+    .input-code {
+      flex: 1;
+      background: #050608;
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 8px;
+      font-size: 14px;
+      text-align: center;
+      font-family: inherit;
+      border-radius: 4px;
+      letter-spacing: 2px;
+    }
+
+    .input-code:focus {
+      outline: none;
+      border-color: var(--vector-cyan);
     }
   </style>
 </head>
@@ -326,7 +367,18 @@
       </div>
 
       <div id="online-box" style="display: none; flex-direction: column; gap: 8px;">
-        <button class="menu-btn invite" id="btn-share-invite">🔗 ВИКЛИКАТИ ДРУГА (ТГ)</button>
+        <div class="room-box">
+          <span style="font-size: 10px; color: var(--muted);">ВАШ КОД КІМНАТИ:</span>
+          <span class="room-code-badge" id="my-room-code">----</span>
+          <button class="menu-btn" id="btn-copy-code" style="padding: 5px; font-size: 10px;">📋 СКОПІЮВАТИ КОД</button>
+        </div>
+
+        <div class="room-input-group">
+          <input class="input-code" type="text" id="join-room-input" placeholder="КОД ДРУГА" maxlength="6">
+          <button class="menu-btn primary" id="btn-join-code" style="width: auto; padding: 8px 12px;">ВХІД</button>
+        </div>
+
+        <button class="menu-btn invite" id="btn-share-invite">🔗 ВІДПРАВИТИ В ТЕЛЕГРАМ</button>
         <div id="online-status" style="font-size: 10px; color: var(--muted); text-align: center;"></div>
       </div>
 
@@ -336,8 +388,6 @@
   </div>
 
   <script>
-    const BOT_USERNAME = "tetrisioononlinebot"; 
-
     const tg = window.Telegram?.WebApp;
     if (tg) { tg.expand(); tg.ready(); }
 
@@ -355,7 +405,7 @@
       setTimeout(() => document.body.classList.remove('shake-light', 'shake-heavy'), 300);
     }
 
-    // --- Безпечна Аудіосистема ---
+    // --- Аудіосистема ---
     const AudioEngine = {
       ctx: null,
       enabled: true,
@@ -445,7 +495,6 @@
       }
     };
 
-    // Розблокування аудіоконтексту при першій взаємодії
     window.addEventListener('touchstart', () => AudioEngine.init(), { once: true });
     window.addEventListener('click', () => AudioEngine.init(), { once: true });
 
@@ -482,7 +531,6 @@
     const P_SIZE = pCanvas.width / COLS;
     const O_SIZE = oCanvas.width / COLS;
 
-    // --- Оптимізація сітки (Offscreen Canvases) ---
     function createGridCache(width, height, size) {
       const c = document.createElement('canvas');
       c.width = width;
@@ -562,7 +610,6 @@
       pCanvas.classList.toggle('danger-pulse', isDanger);
     }
 
-    // Додавання сміття з захистом від зрізання блоків та синхронізацією
     function addGarbage(grid, amount) {
       for (let i = 0; i < amount; i++) {
         if (grid[0].some(val => val !== 0)) {
@@ -816,10 +863,12 @@
       }
     };
 
-    // --- Socket.IO Шар & Синхронізація ---
+    // --- Socket.IO Шар з ручним кодом та авто-з'єднанням ---
     let socket = null;
-    let currentRoomId = null;
+    let myCurrentRoom = Math.floor(1000 + Math.random() * 9000).toString();
     let enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+
+    document.getElementById('my-room-code').innerText = myCurrentRoom;
 
     function initSocket(onConnectCallback) {
       if (socket) {
@@ -831,7 +880,7 @@
       socket = io();
 
       socket.on('connect', () => {
-        document.getElementById('online-status').innerText = 'Готово. Створіть виклик!';
+        document.getElementById('online-status').innerText = 'Підключено. Очікуємо суперника...';
         if (onConnectCallback) onConnectCallback();
       });
 
@@ -849,7 +898,7 @@
       });
 
       socket.on('opponentWantsRestart', () => {
-        document.getElementById('status-text').innerText = 'ОПОНЕНТ ГОТОВИЙ ДО РЕСТАРТУ';
+        document.getElementById('status-text').innerText = 'ОПОНЕНТ ГОТОВИЙ';
       });
 
       socket.on('enemyGrid', (grid) => {
@@ -873,37 +922,44 @@
     }
 
     function joinMatchRoom(roomId) {
-      currentRoomId = roomId;
       initSocket(() => {
         const username = tg?.initDataUnsafe?.user?.first_name || 'Player';
         socket.emit('joinRoom', { roomId, username });
-        document.getElementById('online-status').innerText = `Кімната ${roomId}. Очікування друга...`;
+        document.getElementById('online-status').innerText = `Кімната: ${roomId}. Очікування...`;
       });
     }
 
-    document.getElementById('btn-share-invite').addEventListener('click', () => {
-      const randomRoom = Math.floor(1000 + Math.random() * 9000).toString();
-      joinMatchRoom(randomRoom);
+    // Підключення по кнопці з поля вводу
+    document.getElementById('btn-join-code').addEventListener('click', () => {
+      const code = document.getElementById('join-room-input').value.trim();
+      if (!code) return alert('Введіть код кімнати');
+      joinMatchRoom(code);
+    });
 
-      const inviteUrl = `https://t.me/${BOT_USERNAME}/app?startapp=${randomRoom}`;
-      const shareText = encodeURIComponent(`🎮 Кидаю тобі виклик у Паралельний Тетріс 1v1! Заходь зараз:`);
-      
+    // Скопіювати свій код
+    document.getElementById('btn-copy-code').addEventListener('click', () => {
+      navigator.clipboard.writeText(myCurrentRoom);
+      document.getElementById('btn-copy-code').innerText = '✅ СКОПІЙОВАНО!';
+      setTimeout(() => document.getElementById('btn-copy-code').innerText = '📋 СКОПІЮВАТИ КОД', 2000);
+    });
+
+    // Відправити код у чат Telegram
+    document.getElementById('btn-share-invite').addEventListener('click', () => {
+      joinMatchRoom(myCurrentRoom);
+      const shareText = encodeURIComponent(`🎮 Мій код кімнати в Тетріс: ${myCurrentRoom}\nЗаходь у гру, вбивай цей код і граємо!`);
       if (tg?.openTelegramLink) {
-        tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteUrl)}&text=${shareText}`);
+        tg.openTelegramLink(`https://t.me/share/url?text=${shareText}`);
       } else {
-        navigator.clipboard.writeText(inviteUrl);
-        alert(`Посилання скопійовано!\n${inviteUrl}`);
+        navigator.clipboard.writeText(myCurrentRoom);
+        alert(`Код ${myCurrentRoom} скопійовано!`);
       }
     });
 
-    // --- Рендеринг з оптимізованим кешем сітки ---
+    // --- Рендеринг ---
     function renderVectorBoard(ctx, grid, piece, size, gridCache, isPlayer = false) {
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-      // Малюємо закешовану сітку замість циклу ліній
       ctx.drawImage(gridCache, 0, 0);
 
-      // Зафіксовані блоки
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
           const type = grid[r][c];
@@ -913,7 +969,6 @@
         }
       }
 
-      // Тінь фігури (Ghost Piece)
       if (isPlayer && piece) {
         const ghostY = player.getGhostY();
         const pal = VECTOR_PALETTE[piece.type];
@@ -926,7 +981,6 @@
         });
       }
 
-      // Активна фігура
       if (piece) {
         const pal = VECTOR_PALETTE[piece.type];
         piece.matrix.forEach((row, r) => {
@@ -938,7 +992,6 @@
         });
       }
 
-      // Частинки
       if (isPlayer && particles.length > 0) {
         ctx.save();
         for (let i = particles.length - 1; i >= 0; i--) {
@@ -1085,7 +1138,7 @@
       document.getElementById('online-box').style.display = 'flex';
       document.getElementById('status-text').innerText = 'ONLINE MODE';
       document.getElementById('opponent-title').innerText = 'OPPONENT';
-      initSocket();
+      joinMatchRoom(myCurrentRoom);
     });
 
     const soundBtn = document.getElementById('btn-sound');
@@ -1108,16 +1161,6 @@
       else if (e.code === 'Space') player.hardDrop();
       else if (e.key === 'Escape') setMenu(!isPaused);
     });
-
-    const startParam = tg?.initDataUnsafe?.start_param;
-    if (startParam) {
-      mode = 'online';
-      document.getElementById('tab-online').classList.add('active');
-      document.getElementById('tab-bot').classList.remove('active');
-      document.getElementById('online-box').style.display = 'flex';
-      document.getElementById('status-text').innerText = 'CONNECTING...';
-      joinMatchRoom(startParam);
-    }
 
     player.resetPiece();
     bot.resetPiece();
