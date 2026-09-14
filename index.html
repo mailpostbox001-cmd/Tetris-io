@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Vector Parallel Tetris</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Сокет завантажується напряму з цього ж сервера -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    :root {
+      --bg: #030712;
+      --panel: #0b0f19;
+      --border: #1e293b;
+      --vector-cyan: #38bdf8;
+      --vector-pink: #f43f5e;
+      --text: #f8fafc;
+      --muted: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    header {
+      padding: 8px 12px;
+      background: var(--panel);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+
+    .header-actions { display: flex; gap: 6px; }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--vector-cyan);
+      color: var(--vector-cyan);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+      text-shadow: 0 0 6px var(--vector-cyan);
+    }
+
+    .icon-btn:active { background: var(--vector-cyan); color: #000; }
+
+    #status-text {
+      color: var(--vector-cyan);
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+    }
+
+    #game-container {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 6px;
+      min-height: 0;
+    }
+
+    .board-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .board-title {
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      margin-bottom: 4px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    canvas {
+      background: #02040a;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      box-shadow: 0 0 16px rgba(0, 0, 0, 0.8);
+    }
+
+    #side-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .stats-box {
+      background: var(--panel);
+      padding: 6px;
+      border-radius: 4px;
+      width: 100%;
+      text-align: center;
+      font-size: 9px;
+      border: 1px solid var(--border);
+      letter-spacing: 1px;
+    }
+
+    .stats-box span {
+      display: block;
+      font-size: 15px;
+      font-weight: bold;
+      color: var(--vector-cyan);
+      margin-top: 2px;
+    }
+
+    #controls {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+    }
+
+    .btn {
+      background: #090e17;
+      color: var(--text);
+      border: 1px solid #1f293d;
+      height: 50px;
+      border-radius: 4px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: inherit;
+    }
+
+    .btn:active {
+      border-color: var(--vector-cyan);
+      color: var(--vector-cyan);
+    }
+
+    .btn-drop {
+      border-color: var(--vector-pink);
+      color: var(--vector-pink);
+    }
+
+    .btn-drop:active { background: var(--vector-pink); color: #000; }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(3, 7, 18, 0.94);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      z-index: 50;
+      backdrop-filter: blur(6px);
+    }
+
+    .menu-card {
+      background: var(--panel);
+      border: 1px solid var(--vector-cyan);
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.15);
+      padding: 20px;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 310px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .menu-card h2 {
+      font-size: 16px;
+      text-align: center;
+      letter-spacing: 2px;
+      color: var(--vector-cyan);
+      text-shadow: 0 0 10px var(--vector-cyan);
+    }
+
+    .menu-btn {
+      background: #090e17;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 11px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      width: 100%;
+    }
+
+    .menu-btn.primary {
+      border-color: var(--vector-cyan);
+      color: var(--vector-cyan);
+    }
+
+    .menu-btn:active { background: var(--vector-cyan); color: #000; }
+
+    .mode-switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .mode-switch button.active {
+      border-color: var(--vector-cyan);
+      color: #000;
+      background: var(--vector-cyan);
+    }
+
+    .input-code {
+      width: 100%;
+      background: #030712;
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 8px;
+      font-size: 13px;
+      text-align: center;
+      font-family: inherit;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-actions">
+      <button class="icon-btn" id="btn-pause">МЕНЮ</button>
+      <button class="icon-btn" id="btn-sound">SOUND: ON</button>
+    </div>
+    <div id="status-text">OFFLINE</div>
+  </header>
+
+  <div id="game-container">
+    <div class="board-wrapper">
+      <div class="board-title">YOU</div>
+      <canvas id="p-canvas" width="180" height="360"></canvas>
+    </div>
+
+    <div id="side-panel">
+      <div class="board-wrapper">
+        <div class="board-title" id="opponent-title">ENEMY</div>
+        <canvas id="o-canvas" width="90" height="180"></canvas>
+      </div>
+      <div class="stats-box">
+        LINES YOU
+        <span id="p-lines">0</span>
+      </div>
+      <div class="stats-box">
+        LINES FOE
+        <span id="o-lines">0</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button class="btn" id="btn-left">◀</button>
+    <button class="btn" id="btn-rotate">↻</button>
+    <button class="btn" id="btn-down">▼</button>
+    <button class="btn" id="btn-right">▶</button>
+    <button class="btn btn-drop" id="btn-drop">⤓</button>
+  </div>
+
+  <div class="overlay" id="menu-overlay">
+    <div class="menu-card">
+      <h2 id="menu-title">VECTOR TRIS</h2>
+
+      <div class="mode-switch">
+        <button class="icon-btn active" id="tab-bot">З БОТОМ</button>
+        <button class="icon-btn" id="tab-online">ОНЛАЙН</button>
+      </div>
+
+      <div id="online-box" style="display: none; flex-direction: column; gap: 8px;">
+        <input class="input-code" type="text" id="room-code" placeholder="Кімната (напр. 777)">
+        <button class="menu-btn" id="btn-join-room">УВІЙТИ В КІМНАТУ</button>
+        <div id="online-status" style="font-size: 10px; color: var(--muted); text-align: center;"></div>
+      </div>
+
+      <button class="menu-btn primary" id="btn-resume">ГРАТИ</button>
+      <button class="menu-btn" id="btn-restart">РЕСТАРТ</button>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.expand(); tg.ready(); }
+
+    function haptic(type = 'light') {
+      if (tg?.HapticFeedback) {
+        if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+        else tg.HapticFeedback.impactOccurred(type);
+      }
+    }
+
+    const AudioEngine = {
+      ctx: null,
+      enabled: true,
+      init() {
+        if (!this.ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AC();
+        }
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+      },
+      move() {
+        if (!this.enabled) return;
+        this.init();
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = 'square';
+        o.frequency.setValueAtTime(240, this.ctx.currentTime);
+        g.gain.setValueAtTime(0.02, this.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.03);
+        o.connect(g); g.connect(this.ctx.destination);
+        o.start(); o.stop(this.ctx.currentTime + 0.03);
+      },
+      rotate() {
+        if (!this.enabled) return;
+        this.init();
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(320, this.ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(700, this.ctx.currentTime + 0.05);
+        g.gain.setValueAtTime(0.04, this.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.05);
+        o.connect(g); g.connect(this.ctx.destination);
+        o.start(); o.stop(this.ctx.currentTime + 0.05);
+      },
+      softLanding() {
+        if (!this.enabled) return;
+        this.init();
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(120, this.ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.06);
+        g.gain.setValueAtTime(0.08, this.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.06);
+        o.connect(g); g.connect(this.ctx.destination);
+        o.start(); o.stop(this.ctx.currentTime + 0.06);
+      },
+      hardLanding() {
+        if (!this.enabled) return;
+        this.init();
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(180, this.ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(25, this.ctx.currentTime + 0.15);
+        g.gain.setValueAtTime(0.15, this.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.15);
+        o.connect(g); g.connect(this.ctx.destination);
+        o.start(); o.stop(this.ctx.currentTime + 0.15);
+      },
+      lineClear(lines) {
+        if (!this.enabled) return;
+        this.init();
+        const freqs = [523.25, 659.25, 783.99, 1046.50].slice(0, lines);
+        freqs.forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(freq * 0.8, this.ctx.currentTime + idx * 0.04);
+          osc.frequency.exponentialRampToValueAtTime(freq, this.ctx.currentTime + idx * 0.04 + 0.05);
+          gain.gain.setValueAtTime(0.04, this.ctx.currentTime + idx * 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + idx * 0.04 + 0.18);
+          osc.connect(gain); gain.connect(this.ctx.destination);
+          osc.start(this.ctx.currentTime + idx * 0.04);
+          osc.stop(this.ctx.currentTime + idx * 0.04 + 0.18);
+        });
+      },
+      garbage() {
+        if (!this.enabled) return;
+        this.init();
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(80, this.ctx.currentTime);
+        o.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.25);
+        g.gain.setValueAtTime(0.08, this.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.25);
+        o.connect(g); g.connect(this.ctx.destination);
+        o.start(); o.stop(this.ctx.currentTime + 0.25);
+      }
+    };
+
+    const COLS = 10;
+    const ROWS = 20;
+    const VECTOR_PALETTE = [
+      null,
+      { stroke: '#38bdf8', fill: 'rgba(56, 189, 248, 0.12)', glow: '#38bdf8' },
+      { stroke: '#60a5fa', fill: 'rgba(96, 165, 250, 0.12)', glow: '#60a5fa' },
+      { stroke: '#fb923c', fill: 'rgba(251, 146, 60, 0.12)', glow: '#fb923c' },
+      { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.12)', glow: '#facc15' },
+      { stroke: '#4ade80', fill: 'rgba(74, 222, 128, 0.12)', glow: '#4ade80' },
+      { stroke: '#c084fc', fill: 'rgba(192, 132, 252, 0.12)', glow: '#c084fc' },
+      { stroke: '#f43f5e', fill: 'rgba(244, 63, 94, 0.12)', glow: '#f43f5e' },
+      { stroke: '#64748b', fill: 'rgba(100, 116, 139, 0.15)', glow: '#475569' }
+    ];
+
+    const SHAPES = [
+      [],
+      [[1, 1, 1, 1]],
+      [[2, 0, 0], [2, 2, 2]],
+      [[0, 0, 3], [3, 3, 3]],
+      [[4, 4], [4, 4]],
+      [[0, 5, 5], [5, 5, 0]],
+      [[0, 6, 0], [6, 6, 6]],
+      [[7, 7, 0], [0, 7, 7]]
+    ];
+
+    const pCanvas = document.getElementById('p-canvas');
+    const pCtx = pCanvas.getContext('2d');
+    const oCanvas = document.getElementById('o-canvas');
+    const oCtx = oCanvas.getContext('2d');
+
+    const P_SIZE = pCanvas.width / COLS;
+    const O_SIZE = oCanvas.width / COLS;
+
+    let mode = 'bot';
+    let isGameOver = false;
+    let isPaused = true;
+
+    function rotate(matrix) {
+      return matrix[0].map((_, i) => matrix.map(row => row[i]).reverse());
+    }
+
+    function checkCollision(grid, piece, offset) {
+      const m = piece.matrix;
+      for (let r = 0; r < m.length; ++r) {
+        for (let c = 0; c < m[r].length; ++c) {
+          if (m[r][c] !== 0) {
+            const y = r + piece.y + offset.y;
+            const x = c + piece.x + offset.x;
+            if (x < 0 || x >= COLS || y >= ROWS) return true;
+            if (y >= 0 && grid[y][x] !== 0) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function addGarbage(grid, amount) {
+      for (let i = 0; i < amount; i++) {
+        const hole = Math.floor(Math.random() * COLS);
+        const row = Array(COLS).fill(8);
+        row[hole] = 0;
+        grid.shift();
+        grid.push(row);
+      }
+    }
+
+    // --- Гравець ---
+    const player = {
+      grid: Array.from({ length: ROWS }, () => Array(COLS).fill(0)),
+      piece: null,
+      lines: 0,
+      dropCounter: 0,
+      dropInterval: 750,
+
+      resetPiece() {
+        const type = Math.floor(Math.random() * 7) + 1;
+        this.piece = {
+          matrix: SHAPES[type],
+          x: Math.floor(COLS / 2) - Math.ceil(SHAPES[type][0].length / 2),
+          y: 0,
+          type: type
+        };
+        if (checkCollision(this.grid, this.piece, { x: 0, y: 0 })) {
+          finishGame('DEFEAT // GRID FULL');
+          if (mode === 'online' && socket) socket.emit('playerGameOver');
+        }
+      },
+
+      move(dir) {
+        if (isGameOver || isPaused) return;
+        if (!checkCollision(this.grid, this.piece, { x: dir, y: 0 })) {
+          this.piece.x += dir;
+          AudioEngine.move();
+          haptic('light');
+        }
+      },
+
+      rotate() {
+        if (isGameOver || isPaused) return;
+        const prev = this.piece.matrix;
+        this.piece.matrix = rotate(this.piece.matrix);
+        let offset = 0;
+        if (checkCollision(this.grid, this.piece, { x: 0, y: 0 })) {
+          offset = this.piece.x > COLS / 2 ? -1 : 1;
+          if (checkCollision(this.grid, this.piece, { x: offset, y: 0 })) {
+            this.piece.matrix = prev;
+            return;
+          }
+          this.piece.x += offset;
+        }
+        AudioEngine.rotate();
+        haptic('light');
+      },
+
+      drop() {
+        if (isGameOver || isPaused) return;
+        if (!checkCollision(this.grid, this.piece, { x: 0, y: 1 })) {
+          this.piece.y++;
+        } else {
+          AudioEngine.softLanding();
+          this.lock();
+        }
+        this.dropCounter = 0;
+      },
+
+      hardDrop() {
+        if (isGameOver || isPaused) return;
+        while (!checkCollision(this.grid, this.piece, { x: 0, y: 1 })) {
+          this.piece.y++;
+        }
+        AudioEngine.hardLanding();
+        haptic('rigid');
+        this.lock();
+        this.dropCounter = 0;
+      },
+
+      lock() {
+        this.piece.matrix.forEach((row, r) => {
+          row.forEach((val, c) => {
+            if (val !== 0 && r + this.piece.y >= 0) {
+              this.grid[r + this.piece.y][c + this.piece.x] = this.piece.type;
+            }
+          });
+        });
+
+        let cleared = 0;
+        outer: for (let y = ROWS - 1; y >= 0; --y) {
+          for (let x = 0; x < COLS; ++x) {
+            if (this.grid[y][x] === 0) continue outer;
+          }
+          this.grid.splice(y, 1);
+          this.grid.unshift(Array(COLS).fill(0));
+          cleared++;
+          y++;
+        }
+
+        if (cleared > 0) {
+          this.lines += cleared;
+          document.getElementById('p-lines').innerText = this.lines;
+          AudioEngine.lineClear(cleared);
+          haptic('medium');
+
+          const garbage = cleared === 4 ? 4 : cleared > 1 ? cleared - 1 : 0;
+          if (garbage > 0) {
+            if (mode === 'bot') addGarbage(bot.grid, garbage);
+            else if (socket) socket.emit('sendGarbage', garbage);
+          }
+        }
+
+        if (mode === 'online' && socket) socket.emit('updateGrid', this.grid);
+        this.resetPiece();
+      }
+    };
+
+    // --- Бот AI ---
+    const bot = {
+      grid: Array.from({ length: ROWS }, () => Array(COLS).fill(0)),
+      piece: null,
+      targetX: 0,
+      targetRot: 0,
+      lines: 0,
+      tickRate: 300,
+      lastTick: 0,
+
+      resetPiece() {
+        const type = Math.floor(Math.random() * 7) + 1;
+        this.piece = {
+          matrix: SHAPES[type],
+          x: Math.floor(COLS / 2) - Math.ceil(SHAPES[type][0].length / 2),
+          y: 0,
+          type: type
+        };
+        if (checkCollision(this.grid, this.piece, { x: 0, y: 0 })) {
+          finishGame('VICTORY // BOT DOWN');
+          return;
+        }
+        this.evaluate();
+      },
+
+      evaluate() {
+        let bestScore = -Infinity;
+        let bestX = this.piece.x;
+        let bestRot = 0;
+        let cur = this.piece.matrix;
+
+        for (let rot = 0; rot < 4; rot++) {
+          const test = { matrix: cur, y: 0, type: this.piece.type };
+          for (let x = 0; x <= COLS - cur[0].length; x++) {
+            test.x = x;
+            if (checkCollision(this.grid, test, { x: 0, y: 0 })) continue;
+            let y = 0;
+            while (!checkCollision(this.grid, test, { x: 0, y: y + 1 })) y++;
+
+            let holes = 0;
+            for (let r = 0; r < test.matrix.length; r++) {
+              for (let c = 0; c < test.matrix[r].length; c++) {
+                if (test.matrix[r][c] !== 0 && r + y + 1 < ROWS) {
+                  if (this.grid[r + y + 1][c + x] === 0) holes++;
+                }
+              }
+            }
+            const score = (y * 2) - (holes * 4);
+            if (score > bestScore) {
+              bestScore = score;
+              bestX = x;
+              bestRot = rot;
+            }
+          }
+          cur = rotate(cur);
+        }
+        this.targetX = bestX;
+        this.targetRot = bestRot;
+      },
+
+      step() {
+        if (isGameOver || isPaused || !this.piece) return;
+        if (this.targetRot > 0) {
+          this.piece.matrix = rotate(this.piece.matrix);
+          this.targetRot--;
+          return;
+        }
+        if (this.piece.x < this.targetX) { this.piece.x++; return; }
+        if (this.piece.x > this.targetX) { this.piece.x--; return; }
+
+        if (!checkCollision(this.grid, this.piece, { x: 0, y: 1 })) {
+          this.piece.y++;
+        } else {
+          this.lock();
+        }
+      },
+
+      lock() {
+        this.piece.matrix.forEach((row, r) => {
+          row.forEach((val, c) => {
+            if (val !== 0 && r + this.piece.y >= 0) {
+              this.grid[r + this.piece.y][c + this.piece.x] = this.piece.type;
+            }
+          });
+        });
+
+        let cleared = 0;
+        outer: for (let y = ROWS - 1; y >= 0; --y) {
+          for (let x = 0; x < COLS; ++x) {
+            if (this.grid[y][x] === 0) continue outer;
+          }
+          this.grid.splice(y, 1);
+          this.grid.unshift(Array(COLS).fill(0));
+          cleared++;
+          y++;
+        }
+
+        if (cleared > 0) {
+          this.lines += cleared;
+          document.getElementById('o-lines').innerText = this.lines;
+          const garbage = cleared === 4 ? 4 : cleared > 1 ? cleared - 1 : 0;
+          if (garbage > 0) {
+            AudioEngine.garbage();
+            haptic('error');
+            addGarbage(player.grid, garbage);
+          }
+        }
+        this.resetPiece();
+      }
+    };
+
+    // --- Socket.IO без вписування URL ---
+    let socket = null;
+    let enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+
+    function initSocket() {
+      if (socket) return;
+      document.getElementById('online-status').innerText = 'З\'єднання...';
+
+      // Автопідключення до власного домену Render
+      socket = io();
+
+      socket.on('connect', () => {
+        document.getElementById('online-status').innerText = 'Підключено. Введіть номер кімнати:';
+      });
+
+      socket.on('gameStart', () => {
+        setMenu(false);
+        document.getElementById('status-text').innerText = 'PVP ONLINE';
+        restartGame();
+      });
+
+      socket.on('enemyGrid', (grid) => {
+        enemyGrid = grid;
+      });
+
+      socket.on('receiveGarbage', (amount) => {
+        AudioEngine.garbage();
+        haptic('error');
+        addGarbage(player.grid, amount);
+      });
+
+      socket.on('opponentWon', () => {
+        finishGame('VICTORY // FOE COLLAPSED');
+      });
+
+      socket.on('opponentDisconnected', () => {
+        alert('Опонент вийшов з гри');
+        setMenu(true);
+      });
+    }
+
+    // --- Рендеринг ---
+    function renderVectorBoard(ctx, grid, piece, size) {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+      ctx.save();
+      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = '#0d1527';
+      for (let x = 0; x <= COLS; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x * size, 0);
+        ctx.lineTo(x * size, ROWS * size);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= ROWS; y++) {
+        ctx.beginPath();
+        ctx.moveTo(0, y * size);
+        ctx.lineTo(COLS * size, y * size);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const type = grid[r][c];
+          if (type !== 0) {
+            drawVectorBlock(ctx, c * size, r * size, size, VECTOR_PALETTE[type]);
+          }
+        }
+      }
+
+      if (piece) {
+        const pal = VECTOR_PALETTE[piece.type];
+        piece.matrix.forEach((row, r) => {
+          row.forEach((val, c) => {
+            if (val !== 0) {
+              drawVectorBlock(ctx, (c + piece.x) * size, (r + piece.y) * size, size, pal);
+            }
+          });
+        });
+      }
+    }
+
+    function drawVectorBlock(ctx, x, y, size, pal) {
+      ctx.save();
+      const p = 1.5;
+      const w = size - p * 2;
+
+      ctx.fillStyle = pal.fill;
+      ctx.fillRect(x + p, y + p, w, w);
+
+      ctx.shadowColor = pal.glow;
+      ctx.shadowBlur = 6;
+      ctx.strokeStyle = pal.stroke;
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(x + p, y + p, w, w);
+
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = pal.stroke;
+      ctx.lineWidth = 0.8;
+      const inP = p + 3;
+      const inW = size - inP * 2;
+      if (inW > 2) ctx.strokeRect(x + inP, y + inP, inW, inW);
+
+      ctx.restore();
+    }
+
+    let lastTime = 0;
+    function loop(time = 0) {
+      const dt = time - lastTime;
+      lastTime = time;
+
+      if (!isPaused && !isGameOver) {
+        player.dropCounter += dt;
+        if (player.dropCounter > player.dropInterval) {
+          player.drop();
+        }
+
+        if (mode === 'bot') {
+          if (time - bot.lastTick > bot.tickRate) {
+            bot.step();
+            bot.lastTick = time;
+          }
+        }
+      }
+
+      renderVectorBoard(pCtx, player.grid, player.piece, P_SIZE);
+      renderVectorBoard(oCtx, mode === 'bot' ? bot.grid : enemyGrid, mode === 'bot' ? bot.piece : null, O_SIZE);
+
+      requestAnimationFrame(loop);
+    }
+
+    function setMenu(open) {
+      isPaused = open;
+      document.getElementById('menu-overlay').style.display = open ? 'flex' : 'none';
+    }
+
+    function finishGame(title) {
+      isGameOver = true;
+      document.getElementById('menu-title').innerText = title;
+      setMenu(true);
+    }
+
+    function restartGame() {
+      player.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      bot.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      player.lines = 0;
+      bot.lines = 0;
+      document.getElementById('p-lines').innerText = '0';
+      document.getElementById('o-lines').innerText = '0';
+      isGameOver = false;
+      player.resetPiece();
+      if (mode === 'bot') bot.resetPiece();
+      setMenu(false);
+    }
+
+    // --- Обробники кнопок та інтерфейсу ---
+    document.getElementById('btn-pause').addEventListener('click', () => {
+      document.getElementById('menu-title').innerText = 'PAUSE // MENU';
+      setMenu(true);
+    });
+
+    document.getElementById('btn-resume').addEventListener('click', () => {
+      if (isGameOver) restartGame();
+      else setMenu(false);
+    });
+
+    document.getElementById('btn-restart').addEventListener('click', restartGame);
+
+    document.getElementById('tab-bot').addEventListener('click', () => {
+      mode = 'bot';
+      document.getElementById('tab-bot').classList.add('active');
+      document.getElementById('tab-online').classList.remove('active');
+      document.getElementById('online-box').style.display = 'none';
+      document.getElementById('status-text').innerText = 'BOT MATCH';
+      document.getElementById('opponent-title').innerText = 'BOT AI';
+      restartGame();
+    });
+
+    document.getElementById('tab-online').addEventListener('click', () => {
+      mode = 'online';
+      document.getElementById('tab-online').classList.add('active');
+      document.getElementById('tab-bot').classList.remove('active');
+      document.getElementById('online-box').style.display = 'flex';
+      document.getElementById('status-text').innerText = 'ONLINE MODE';
+      document.getElementById('opponent-title').innerText = 'OPPONENT';
+      initSocket();
+    });
+
+    document.getElementById('btn-join-room').addEventListener('click', () => {
+      const roomId = document.getElementById('room-code').value.trim();
+      if (!roomId) return alert('Введіть номер кімнати');
+      if (socket) {
+        socket.emit('joinRoom', { roomId });
+        document.getElementById('online-status').innerText = `Кімната ${roomId}. Очікування суперника...`;
+      }
+    });
+
+    const soundBtn = document.getElementById('btn-sound');
+    soundBtn.addEventListener('click', () => {
+      AudioEngine.enabled = !AudioEngine.enabled;
+      soundBtn.innerText = AudioEngine.enabled ? 'SOUND: ON' : 'SOUND: OFF';
+    });
+
+    document.getElementById('btn-left').addEventListener('click', () => player.move(-1));
+    document.getElementById('btn-right').addEventListener('click', () => player.move(1));
+    document.getElementById('btn-rotate').addEventListener('click', () => player.rotate());
+    document.getElementById('btn-down').addEventListener('click', () => player.drop());
+    document.getElementById('btn-drop').addEventListener('click', () => player.hardDrop());
+
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft') player.move(-1);
+      else if (e.key === 'ArrowRight') player.move(1);
+      else if (e.key === 'ArrowUp') player.rotate();
+      else if (e.key === 'ArrowDown') player.drop();
+      else if (e.code === 'Space') player.hardDrop();
+      else if (e.key === 'Escape') setMenu(!isPaused);
+    });
+
+    if (tg?.initDataUnsafe?.start_param) {
+      document.getElementById('tab-online').click();
+      document.getElementById('room-code').value = tg.initDataUnsafe.start_param;
+      setTimeout(() => document.getElementById('btn-join-room').click(), 500);
+    }
+
+    player.resetPiece();
+    bot.resetPiece();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
