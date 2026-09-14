@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Vector Parallel Tetris</title>
+  <title>Vector Parallel Tetris 1v1</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <!-- Сокет завантажується напряму з цього ж сервера -->
   <script src="/socket.io/socket.io.js"></script>
 
   <style>
@@ -15,6 +14,7 @@
       --border: #1e293b;
       --vector-cyan: #38bdf8;
       --vector-pink: #f43f5e;
+      --vector-danger: #ef4444;
       --text: #f8fafc;
       --muted: #64748b;
     }
@@ -38,6 +38,32 @@
       display: flex;
       flex-direction: column;
       justify-content: space-between;
+      transition: transform 0.05s ease-out;
+    }
+
+    /* Анімація Screen Shake */
+    body.shake-light {
+      animation: shakeLight 0.15s ease-in-out;
+    }
+    body.shake-heavy {
+      animation: shakeHeavy 0.3s ease-in-out;
+    }
+
+    @keyframes shakeLight {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(-3px, 4px); }
+      50% { transform: translate(3px, -3px); }
+      75% { transform: translate(-2px, 2px); }
+      100% { transform: translate(0, 0); }
+    }
+
+    @keyframes shakeHeavy {
+      0% { transform: translate(0, 0); filter: brightness(1.6); }
+      20% { transform: translate(-8px, 8px); }
+      40% { transform: translate(8px, -6px); }
+      60% { transform: translate(-6px, 4px); }
+      80% { transform: translate(4px, -2px); }
+      100% { transform: translate(0, 0); filter: brightness(1); }
     }
 
     header {
@@ -48,6 +74,7 @@
       align-items: center;
       border-bottom: 1px solid var(--border);
       font-size: 11px;
+      z-index: 10;
     }
 
     .header-actions { display: flex; gap: 6px; }
@@ -81,12 +108,14 @@
       gap: 12px;
       padding: 6px;
       min-height: 0;
+      position: relative;
     }
 
     .board-wrapper {
       display: flex;
       flex-direction: column;
       align-items: center;
+      position: relative;
     }
 
     .board-title {
@@ -102,6 +131,19 @@
       border-radius: 4px;
       border: 1px solid var(--border);
       box-shadow: 0 0 16px rgba(0, 0, 0, 0.8);
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+    /* Danger State (Пульсація при наближенні блоків до стелі) */
+    canvas.danger-pulse {
+      border-color: var(--vector-danger) !important;
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.5) !important;
+      animation: pulseGlow 1s infinite alternate;
+    }
+
+    @keyframes pulseGlow {
+      from { box-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
+      to { box-shadow: 0 0 25px rgba(239, 68, 68, 0.8); }
     }
 
     #side-panel {
@@ -210,6 +252,7 @@
       font-family: inherit;
       cursor: pointer;
       width: 100%;
+      letter-spacing: 0.5px;
     }
 
     .menu-btn.primary {
@@ -217,7 +260,14 @@
       color: var(--vector-cyan);
     }
 
+    .menu-btn.invite {
+      border-color: #22c55e;
+      color: #22c55e;
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+    }
+
     .menu-btn:active { background: var(--vector-cyan); color: #000; }
+    .menu-btn.invite:active { background: #22c55e; color: #000; }
 
     .mode-switch {
       display: grid;
@@ -229,18 +279,6 @@
       border-color: var(--vector-cyan);
       color: #000;
       background: var(--vector-cyan);
-    }
-
-    .input-code {
-      width: 100%;
-      background: #030712;
-      border: 1px solid var(--border);
-      color: #fff;
-      padding: 8px;
-      font-size: 13px;
-      text-align: center;
-      font-family: inherit;
-      border-radius: 4px;
     }
   </style>
 </head>
@@ -256,7 +294,7 @@
 
   <div id="game-container">
     <div class="board-wrapper">
-      <div class="board-title">YOU</div>
+      <div class="board-title" id="player-title">YOU</div>
       <canvas id="p-canvas" width="180" height="360"></canvas>
     </div>
 
@@ -294,8 +332,7 @@
       </div>
 
       <div id="online-box" style="display: none; flex-direction: column; gap: 8px;">
-        <input class="input-code" type="text" id="room-code" placeholder="Кімната (напр. 777)">
-        <button class="menu-btn" id="btn-join-room">УВІЙТИ В КІМНАТУ</button>
+        <button class="menu-btn invite" id="btn-share-invite">🔗 ВИКЛИКАТИ ДРУГА (ТГ)</button>
         <div id="online-status" style="font-size: 10px; color: var(--muted); text-align: center;"></div>
       </div>
 
@@ -305,6 +342,9 @@
   </div>
 
   <script>
+    // === ВКАЖІТЬ ЮЗЕРНЕЙМ ВАШОГО БОТА (БЕЗ @) ===
+    const BOT_USERNAME = "tetrisioononlinebot"; 
+
     const tg = window.Telegram?.WebApp;
     if (tg) { tg.expand(); tg.ready(); }
 
@@ -315,6 +355,15 @@
       }
     }
 
+    // --- Screen Shake & Flash ---
+    function triggerShake(type = 'light') {
+      document.body.classList.remove('shake-light', 'shake-heavy');
+      void document.body.offsetWidth; // Reflow
+      document.body.classList.add(type === 'heavy' ? 'shake-heavy' : 'shake-light');
+      setTimeout(() => document.body.classList.remove('shake-light', 'shake-heavy'), 300);
+    }
+
+    // --- Аудіосистема ---
     const AudioEngine = {
       ctx: null,
       enabled: true,
@@ -438,6 +487,25 @@
     let mode = 'bot';
     let isGameOver = false;
     let isPaused = true;
+    let particles = [];
+
+    // Створення частинок від вибуху ліній
+    function spawnLineParticles(rowY, colCount) {
+      for (let c = 0; c < colCount; c++) {
+        for (let i = 0; i < 4; i++) {
+          particles.push({
+            x: c * P_SIZE + P_SIZE / 2,
+            y: rowY * P_SIZE + P_SIZE / 2,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            size: Math.random() * 2 + 1,
+            color: '#38bdf8',
+            life: 1.0,
+            decay: Math.random() * 0.04 + 0.02
+          });
+        }
+      }
+    }
 
     function rotate(matrix) {
       return matrix[0].map((_, i) => matrix.map(row => row[i]).reverse());
@@ -458,6 +526,20 @@
       return false;
     }
 
+    // Перевірка небезпечного заповнення поля (Danger State)
+    function checkDangerState() {
+      let isDanger = false;
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (player.grid[r][c] !== 0) {
+            isDanger = true;
+            break;
+          }
+        }
+      }
+      pCanvas.classList.toggle('danger-pulse', isDanger);
+    }
+
     function addGarbage(grid, amount) {
       for (let i = 0; i < amount; i++) {
         const hole = Math.floor(Math.random() * COLS);
@@ -466,6 +548,8 @@
         grid.shift();
         grid.push(row);
       }
+      triggerShake('heavy');
+      checkDangerState();
     }
 
     // --- Гравець ---
@@ -488,6 +572,16 @@
           finishGame('DEFEAT // GRID FULL');
           if (mode === 'online' && socket) socket.emit('playerGameOver');
         }
+        checkDangerState();
+      },
+
+      getGhostY() {
+        if (!this.piece) return 0;
+        let ghostY = this.piece.y;
+        while (!checkCollision(this.grid, this.piece, { x: 0, y: ghostY - this.piece.y + 1 })) {
+          ghostY++;
+        }
+        return ghostY;
       },
 
       move(dir) {
@@ -533,6 +627,7 @@
           this.piece.y++;
         }
         AudioEngine.hardLanding();
+        triggerShake('light');
         haptic('rigid');
         this.lock();
         this.dropCounter = 0;
@@ -552,6 +647,7 @@
           for (let x = 0; x < COLS; ++x) {
             if (this.grid[y][x] === 0) continue outer;
           }
+          spawnLineParticles(y, COLS);
           this.grid.splice(y, 1);
           this.grid.unshift(Array(COLS).fill(0));
           cleared++;
@@ -563,6 +659,10 @@
           document.getElementById('p-lines').innerText = this.lines;
           AudioEngine.lineClear(cleared);
           haptic('medium');
+
+          if (cleared === 4) {
+            triggerShake('heavy');
+          }
 
           const garbage = cleared === 4 ? 4 : cleared > 1 ? cleared - 1 : 0;
           if (garbage > 0) {
@@ -687,24 +787,29 @@
       }
     };
 
-    // --- Socket.IO без вписування URL ---
+    // --- Socket.IO Шар & Кімнати ---
     let socket = null;
+    let currentRoomId = null;
     let enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 
-    function initSocket() {
-      if (socket) return;
+    function initSocket(onConnectCallback) {
+      if (socket) {
+        if (onConnectCallback) onConnectCallback();
+        return;
+      }
       document.getElementById('online-status').innerText = 'З\'єднання...';
 
-      // Автопідключення до власного домену Render
       socket = io();
 
       socket.on('connect', () => {
-        document.getElementById('online-status').innerText = 'Підключено. Введіть номер кімнати:';
+        document.getElementById('online-status').innerText = 'Готово. Створіть виклик!';
+        if (onConnectCallback) onConnectCallback();
       });
 
-      socket.on('gameStart', () => {
+      socket.on('gameStart', ({ players }) => {
         setMenu(false);
         document.getElementById('status-text').innerText = 'PVP ONLINE';
+        document.getElementById('opponent-title').innerText = 'FRIEND';
         restartGame();
       });
 
@@ -723,15 +828,43 @@
       });
 
       socket.on('opponentDisconnected', () => {
-        alert('Опонент вийшов з гри');
+        alert('Суперник вийшов з матчу');
         setMenu(true);
       });
     }
 
-    // --- Рендеринг ---
-    function renderVectorBoard(ctx, grid, piece, size) {
+    // Приєднання до кімнати
+    function joinMatchRoom(roomId) {
+      currentRoomId = roomId;
+      initSocket(() => {
+        const username = tg?.initDataUnsafe?.user?.first_name || 'Player';
+        socket.emit('joinRoom', { roomId, username });
+        document.getElementById('online-status').innerText = `Кімната ${roomId}. Очікування друга...`;
+      });
+    }
+
+    // Поділитися посиланням через Telegram
+    document.getElementById('btn-share-invite').addEventListener('click', () => {
+      const randomRoom = Math.floor(1000 + Math.random() * 9000).toString();
+      joinMatchRoom(randomRoom);
+
+      const inviteUrl = `https://t.me/${BOT_USERNAME}/app?startapp=${randomRoom}`;
+      const shareText = encodeURIComponent(`🎮 Кидаю тобі виклик у Паралельний Тетріс 1v1! Заходь зараз:`);
+      
+      // Виклик системного вікна Telegram
+      if (tg?.openTelegramLink) {
+        tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteUrl)}&text=${shareText}`);
+      } else {
+        navigator.clipboard.writeText(inviteUrl);
+        alert(`Посилання скопійовано!\n${inviteUrl}`);
+      }
+    });
+
+    // --- Векторний Рендеринг (З Ghost Piece & Particles) ---
+    function renderVectorBoard(ctx, grid, piece, size, isPlayer = false) {
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
+      // Векторна сітка
       ctx.save();
       ctx.lineWidth = 0.5;
       ctx.strokeStyle = '#0d1527';
@@ -749,6 +882,7 @@
       }
       ctx.restore();
 
+      // Зафіксовані блоки
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
           const type = grid[r][c];
@@ -758,6 +892,20 @@
         }
       }
 
+      // Тінь фігури (Ghost Piece) для гравця
+      if (isPlayer && piece) {
+        const ghostY = player.getGhostY();
+        const pal = VECTOR_PALETTE[piece.type];
+        piece.matrix.forEach((row, r) => {
+          row.forEach((val, c) => {
+            if (val !== 0) {
+              drawGhostBlock(ctx, (c + piece.x) * size, (r + ghostY) * size, size, pal);
+            }
+          });
+        });
+      }
+
+      // Активна фігура
       if (piece) {
         const pal = VECTOR_PALETTE[piece.type];
         piece.matrix.forEach((row, r) => {
@@ -767,6 +915,24 @@
             }
           });
         });
+      }
+
+      // Рендеринг частинок (тільки на полі гравця)
+      if (isPlayer && particles.length > 0) {
+        ctx.save();
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = p.life;
+          ctx.fillRect(p.x, p.y, p.size, p.size);
+
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life -= p.decay;
+
+          if (p.life <= 0) particles.splice(i, 1);
+        }
+        ctx.restore();
       }
     }
 
@@ -794,6 +960,18 @@
       ctx.restore();
     }
 
+    function drawGhostBlock(ctx, x, y, size, pal) {
+      ctx.save();
+      const p = 1.5;
+      const w = size - p * 2;
+      ctx.strokeStyle = pal.stroke;
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.strokeRect(x + p, y + p, w, w);
+      ctx.restore();
+    }
+
     let lastTime = 0;
     function loop(time = 0) {
       const dt = time - lastTime;
@@ -813,8 +991,8 @@
         }
       }
 
-      renderVectorBoard(pCtx, player.grid, player.piece, P_SIZE);
-      renderVectorBoard(oCtx, mode === 'bot' ? bot.grid : enemyGrid, mode === 'bot' ? bot.piece : null, O_SIZE);
+      renderVectorBoard(pCtx, player.grid, player.piece, P_SIZE, true);
+      renderVectorBoard(oCtx, mode === 'bot' ? bot.grid : enemyGrid, mode === 'bot' ? bot.piece : null, O_SIZE, false);
 
       requestAnimationFrame(loop);
     }
@@ -836,6 +1014,7 @@
       enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
       player.lines = 0;
       bot.lines = 0;
+      particles = [];
       document.getElementById('p-lines').innerText = '0';
       document.getElementById('o-lines').innerText = '0';
       isGameOver = false;
@@ -844,7 +1023,7 @@
       setMenu(false);
     }
 
-    // --- Обробники кнопок та інтерфейсу ---
+    // --- Меню та керування ---
     document.getElementById('btn-pause').addEventListener('click', () => {
       document.getElementById('menu-title').innerText = 'PAUSE // MENU';
       setMenu(true);
@@ -877,15 +1056,6 @@
       initSocket();
     });
 
-    document.getElementById('btn-join-room').addEventListener('click', () => {
-      const roomId = document.getElementById('room-code').value.trim();
-      if (!roomId) return alert('Введіть номер кімнати');
-      if (socket) {
-        socket.emit('joinRoom', { roomId });
-        document.getElementById('online-status').innerText = `Кімната ${roomId}. Очікування суперника...`;
-      }
-    });
-
     const soundBtn = document.getElementById('btn-sound');
     soundBtn.addEventListener('click', () => {
       AudioEngine.enabled = !AudioEngine.enabled;
@@ -907,10 +1077,15 @@
       else if (e.key === 'Escape') setMenu(!isPaused);
     });
 
-    if (tg?.initDataUnsafe?.start_param) {
-      document.getElementById('tab-online').click();
-      document.getElementById('room-code').value = tg.initDataUnsafe.start_param;
-      setTimeout(() => document.getElementById('btn-join-room').click(), 500);
+    // --- Авто-вхід за посиланням з Telegram (Параметр startapp) ---
+    const startParam = tg?.initDataUnsafe?.start_param;
+    if (startParam) {
+      mode = 'online';
+      document.getElementById('tab-online').classList.add('active');
+      document.getElementById('tab-bot').classList.remove('active');
+      document.getElementById('online-box').style.display = 'flex';
+      document.getElementById('status-text').innerText = 'CONNECTING...';
+      joinMatchRoom(startParam);
     }
 
     player.resetPiece();
