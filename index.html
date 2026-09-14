@@ -41,13 +41,8 @@
       transition: transform 0.05s ease-out;
     }
 
-    /* Анімація Screen Shake */
-    body.shake-light {
-      animation: shakeLight 0.15s ease-in-out;
-    }
-    body.shake-heavy {
-      animation: shakeHeavy 0.3s ease-in-out;
-    }
+    body.shake-light { animation: shakeLight 0.15s ease-in-out; }
+    body.shake-heavy { animation: shakeHeavy 0.3s ease-in-out; }
 
     @keyframes shakeLight {
       0% { transform: translate(0, 0); }
@@ -134,7 +129,6 @@
       transition: border-color 0.3s, box-shadow 0.3s;
     }
 
-    /* Danger State (Пульсація при наближенні блоків до стелі) */
     canvas.danger-pulse {
       border-color: var(--vector-danger) !important;
       box-shadow: 0 0 20px rgba(239, 68, 68, 0.5) !important;
@@ -342,7 +336,6 @@
   </div>
 
   <script>
-    // === ВКАЖІТЬ ЮЗЕРНЕЙМ ВАШОГО БОТА (БЕЗ @) ===
     const BOT_USERNAME = "tetrisioononlinebot"; 
 
     const tg = window.Telegram?.WebApp;
@@ -355,15 +348,14 @@
       }
     }
 
-    // --- Screen Shake & Flash ---
     function triggerShake(type = 'light') {
       document.body.classList.remove('shake-light', 'shake-heavy');
-      void document.body.offsetWidth; // Reflow
+      void document.body.offsetWidth;
       document.body.classList.add(type === 'heavy' ? 'shake-heavy' : 'shake-light');
       setTimeout(() => document.body.classList.remove('shake-light', 'shake-heavy'), 300);
     }
 
-    // --- Аудіосистема ---
+    // --- Безпечна Аудіосистема ---
     const AudioEngine = {
       ctx: null,
       enabled: true,
@@ -372,7 +364,9 @@
           const AC = window.AudioContext || window.webkitAudioContext;
           this.ctx = new AC();
         }
-        if (this.ctx.state === 'suspended') this.ctx.resume();
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
       },
       move() {
         if (!this.enabled) return;
@@ -451,6 +445,10 @@
       }
     };
 
+    // Розблокування аудіоконтексту при першій взаємодії
+    window.addEventListener('touchstart', () => AudioEngine.init(), { once: true });
+    window.addEventListener('click', () => AudioEngine.init(), { once: true });
+
     const COLS = 10;
     const ROWS = 20;
     const VECTOR_PALETTE = [
@@ -484,12 +482,37 @@
     const P_SIZE = pCanvas.width / COLS;
     const O_SIZE = oCanvas.width / COLS;
 
+    // --- Оптимізація сітки (Offscreen Canvases) ---
+    function createGridCache(width, height, size) {
+      const c = document.createElement('canvas');
+      c.width = width;
+      c.height = height;
+      const ctx = c.getContext('2d');
+      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = '#0d1527';
+      for (let x = 0; x <= COLS; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x * size, 0);
+        ctx.lineTo(x * size, ROWS * size);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= ROWS; y++) {
+        ctx.beginPath();
+        ctx.moveTo(0, y * size);
+        ctx.lineTo(COLS * size, y * size);
+        ctx.stroke();
+      }
+      return c;
+    }
+
+    const pGridCache = createGridCache(pCanvas.width, pCanvas.height, P_SIZE);
+    const oGridCache = createGridCache(oCanvas.width, oCanvas.height, O_SIZE);
+
     let mode = 'bot';
     let isGameOver = false;
     let isPaused = true;
     let particles = [];
 
-    // Створення частинок від вибуху ліній
     function spawnLineParticles(rowY, colCount) {
       for (let c = 0; c < colCount; c++) {
         for (let i = 0; i < 4; i++) {
@@ -526,7 +549,6 @@
       return false;
     }
 
-    // Перевірка небезпечного заповнення поля (Danger State)
     function checkDangerState() {
       let isDanger = false;
       for (let r = 0; r < 4; r++) {
@@ -540,8 +562,15 @@
       pCanvas.classList.toggle('danger-pulse', isDanger);
     }
 
+    // Додавання сміття з захистом від зрізання блоків та синхронізацією
     function addGarbage(grid, amount) {
       for (let i = 0; i < amount; i++) {
+        if (grid[0].some(val => val !== 0)) {
+          finishGame('DEFEAT // PUSHED OUT');
+          if (mode === 'online' && socket) socket.emit('playerGameOver');
+          return;
+        }
+
         const hole = Math.floor(Math.random() * COLS);
         const row = Array(COLS).fill(8);
         row[hole] = 0;
@@ -550,6 +579,8 @@
       }
       triggerShake('heavy');
       checkDangerState();
+
+      if (mode === 'online' && socket) socket.emit('updateGrid', grid);
     }
 
     // --- Гравець ---
@@ -660,9 +691,7 @@
           AudioEngine.lineClear(cleared);
           haptic('medium');
 
-          if (cleared === 4) {
-            triggerShake('heavy');
-          }
+          if (cleared === 4) triggerShake('heavy');
 
           const garbage = cleared === 4 ? 4 : cleared > 1 ? cleared - 1 : 0;
           if (garbage > 0) {
@@ -787,7 +816,7 @@
       }
     };
 
-    // --- Socket.IO Шар & Кімнати ---
+    // --- Socket.IO Шар & Синхронізація ---
     let socket = null;
     let currentRoomId = null;
     let enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
@@ -806,11 +835,21 @@
         if (onConnectCallback) onConnectCallback();
       });
 
-      socket.on('gameStart', ({ players }) => {
+      socket.on('gameStart', () => {
         setMenu(false);
         document.getElementById('status-text').innerText = 'PVP ONLINE';
         document.getElementById('opponent-title').innerText = 'FRIEND';
+        document.getElementById('btn-restart').innerText = 'РЕСТАРТ';
         restartGame();
+      });
+
+      socket.on('matchRestarted', () => {
+        document.getElementById('btn-restart').innerText = 'РЕСТАРТ';
+        restartGame();
+      });
+
+      socket.on('opponentWantsRestart', () => {
+        document.getElementById('status-text').innerText = 'ОПОНЕНТ ГОТОВИЙ ДО РЕСТАРТУ';
       });
 
       socket.on('enemyGrid', (grid) => {
@@ -833,7 +872,6 @@
       });
     }
 
-    // Приєднання до кімнати
     function joinMatchRoom(roomId) {
       currentRoomId = roomId;
       initSocket(() => {
@@ -843,7 +881,6 @@
       });
     }
 
-    // Поділитися посиланням через Telegram
     document.getElementById('btn-share-invite').addEventListener('click', () => {
       const randomRoom = Math.floor(1000 + Math.random() * 9000).toString();
       joinMatchRoom(randomRoom);
@@ -851,7 +888,6 @@
       const inviteUrl = `https://t.me/${BOT_USERNAME}/app?startapp=${randomRoom}`;
       const shareText = encodeURIComponent(`🎮 Кидаю тобі виклик у Паралельний Тетріс 1v1! Заходь зараз:`);
       
-      // Виклик системного вікна Telegram
       if (tg?.openTelegramLink) {
         tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(inviteUrl)}&text=${shareText}`);
       } else {
@@ -860,27 +896,12 @@
       }
     });
 
-    // --- Векторний Рендеринг (З Ghost Piece & Particles) ---
-    function renderVectorBoard(ctx, grid, piece, size, isPlayer = false) {
+    // --- Рендеринг з оптимізованим кешем сітки ---
+    function renderVectorBoard(ctx, grid, piece, size, gridCache, isPlayer = false) {
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-      // Векторна сітка
-      ctx.save();
-      ctx.lineWidth = 0.5;
-      ctx.strokeStyle = '#0d1527';
-      for (let x = 0; x <= COLS; x++) {
-        ctx.beginPath();
-        ctx.moveTo(x * size, 0);
-        ctx.lineTo(x * size, ROWS * size);
-        ctx.stroke();
-      }
-      for (let y = 0; y <= ROWS; y++) {
-        ctx.beginPath();
-        ctx.moveTo(0, y * size);
-        ctx.lineTo(COLS * size, y * size);
-        ctx.stroke();
-      }
-      ctx.restore();
+      // Малюємо закешовану сітку замість циклу ліній
+      ctx.drawImage(gridCache, 0, 0);
 
       // Зафіксовані блоки
       for (let r = 0; r < ROWS; r++) {
@@ -892,7 +913,7 @@
         }
       }
 
-      // Тінь фігури (Ghost Piece) для гравця
+      // Тінь фігури (Ghost Piece)
       if (isPlayer && piece) {
         const ghostY = player.getGhostY();
         const pal = VECTOR_PALETTE[piece.type];
@@ -917,7 +938,7 @@
         });
       }
 
-      // Рендеринг частинок (тільки на полі гравця)
+      // Частинки
       if (isPlayer && particles.length > 0) {
         ctx.save();
         for (let i = particles.length - 1; i >= 0; i--) {
@@ -991,8 +1012,8 @@
         }
       }
 
-      renderVectorBoard(pCtx, player.grid, player.piece, P_SIZE, true);
-      renderVectorBoard(oCtx, mode === 'bot' ? bot.grid : enemyGrid, mode === 'bot' ? bot.piece : null, O_SIZE, false);
+      renderVectorBoard(pCtx, player.grid, player.piece, P_SIZE, pGridCache, true);
+      renderVectorBoard(oCtx, mode === 'bot' ? bot.grid : enemyGrid, mode === 'bot' ? bot.piece : null, O_SIZE, oGridCache, false);
 
       requestAnimationFrame(loop);
     }
@@ -1023,18 +1044,29 @@
       setMenu(false);
     }
 
-    // --- Меню та керування ---
+    // --- Обробники кнопок ---
     document.getElementById('btn-pause').addEventListener('click', () => {
       document.getElementById('menu-title').innerText = 'PAUSE // MENU';
       setMenu(true);
     });
 
     document.getElementById('btn-resume').addEventListener('click', () => {
-      if (isGameOver) restartGame();
-      else setMenu(false);
+      if (isGameOver) {
+        document.getElementById('btn-restart').click();
+      } else {
+        setMenu(false);
+      }
     });
 
-    document.getElementById('btn-restart').addEventListener('click', restartGame);
+    document.getElementById('btn-restart').addEventListener('click', () => {
+      if (mode === 'online' && socket) {
+        document.getElementById('status-text').innerText = 'ОЧІКУВАННЯ СУПЕРНИКА...';
+        document.getElementById('btn-restart').innerText = 'ГОТОВИЙ (ЧЕКАЄМО)';
+        socket.emit('requestRestart');
+      } else {
+        restartGame();
+      }
+    });
 
     document.getElementById('tab-bot').addEventListener('click', () => {
       mode = 'bot';
@@ -1077,7 +1109,6 @@
       else if (e.key === 'Escape') setMenu(!isPaused);
     });
 
-    // --- Авто-вхід за посиланням з Telegram (Параметр startapp) ---
     const startParam = tg?.initDataUnsafe?.start_param;
     if (startParam) {
       mode = 'online';
