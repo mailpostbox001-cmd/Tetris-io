@@ -7,7 +7,6 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Роздаємо статичні файли (наш index.html) з поточної папки
 app.use(express.static(__dirname));
 
 app.get('*', (req, res) => {
@@ -17,18 +16,21 @@ app.get('*', (req, res) => {
 const rooms = new Map();
 
 io.on('connection', (socket) => {
-  socket.on('joinRoom', ({ roomId }) => {
+  socket.on('joinRoom', ({ roomId, username }) => {
     socket.join(roomId);
     socket.roomId = roomId;
+    socket.username = username || 'Player';
 
     if (!rooms.has(roomId)) {
-      rooms.set(roomId, new Set());
+      rooms.set(roomId, new Map());
     }
     const room = rooms.get(roomId);
-    room.add(socket.id);
+    room.set(socket.id, socket.username);
 
+    // Якщо в кімнаті зібралося двоє — даємо старт обом
     if (room.size === 2) {
-      io.to(roomId).emit('gameStart');
+      const players = Array.from(room.values());
+      io.to(roomId).emit('gameStart', { players });
     }
   });
 
