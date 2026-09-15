@@ -18,6 +18,20 @@ const rooms = new Map();
 
 io.on('connection', (socket) => {
   socket.on('joinRoom', ({ roomId, username }) => {
+    // ВАЖЛИВИЙ ФІКС: Якщо гравець вже був у кімнаті (наприклад, своїй) - видаляємо його звідти
+    if (socket.roomId && socket.roomId !== roomId) {
+      socket.leave(socket.roomId);
+      const oldRoom = rooms.get(socket.roomId);
+      if (oldRoom) {
+        oldRoom.players.delete(socket.id);
+        oldRoom.readyRestarts.delete(socket.id);
+        if (oldRoom.players.size === 0) {
+          rooms.delete(socket.roomId);
+        }
+      }
+    }
+
+    // Підключаємо до нової цільової кімнати
     socket.join(roomId);
     socket.roomId = roomId;
     socket.username = username || 'Player';
@@ -32,6 +46,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     room.players.set(socket.id, socket.username);
 
+    // Старт гри, якщо зібралось двоє
     if (room.players.size === 2) {
       room.readyRestarts.clear();
       io.to(roomId).emit('gameStart', { ready: true });
@@ -56,7 +71,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Синхронізований рестарт
   socket.on('requestRestart', () => {
     if (!socket.roomId || !rooms.has(socket.roomId)) return;
     const room = rooms.get(socket.roomId);
