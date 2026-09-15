@@ -388,6 +388,8 @@
   </div>
 
   <script>
+    const BOT_USERNAME = "tetrisioononlinebot"; 
+
     const tg = window.Telegram?.WebApp;
     if (tg) { tg.expand(); tg.ready(); }
 
@@ -405,7 +407,7 @@
       setTimeout(() => document.body.classList.remove('shake-light', 'shake-heavy'), 300);
     }
 
-    // --- Аудіосистема ---
+    // --- Безпечна Аудіосистема ---
     const AudioEngine = {
       ctx: null,
       enabled: true,
@@ -414,9 +416,7 @@
           const AC = window.AudioContext || window.webkitAudioContext;
           this.ctx = new AC();
         }
-        if (this.ctx.state === 'suspended') {
-          this.ctx.resume();
-        }
+        if (this.ctx.state === 'suspended') this.ctx.resume();
       },
       move() {
         if (!this.enabled) return;
@@ -527,7 +527,6 @@
     const pCtx = pCanvas.getContext('2d');
     const oCanvas = document.getElementById('o-canvas');
     const oCtx = oCanvas.getContext('2d');
-
     const P_SIZE = pCanvas.width / COLS;
     const O_SIZE = oCanvas.width / COLS;
 
@@ -617,7 +616,6 @@
           if (mode === 'online' && socket) socket.emit('playerGameOver');
           return;
         }
-
         const hole = Math.floor(Math.random() * COLS);
         const row = Array(COLS).fill(8);
         row[hole] = 0;
@@ -626,7 +624,6 @@
       }
       triggerShake('heavy');
       checkDangerState();
-
       if (mode === 'online' && socket) socket.emit('updateGrid', grid);
     }
 
@@ -863,25 +860,26 @@
       }
     };
 
-    // --- Socket.IO Шар з ручним кодом та авто-з'єднанням ---
+    // --- ФІКС МЕРЕЖЕВОГО ШАРУ ---
     let socket = null;
-    let myCurrentRoom = Math.floor(1000 + Math.random() * 9000).toString();
+    let myCurrentRoom = Math.floor(1000 + Math.random() * 9000).toString(); // Глобальна цільова кімната
     let enemyGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 
     document.getElementById('my-room-code').innerText = myCurrentRoom;
 
-    function initSocket(onConnectCallback) {
-      if (socket) {
-        if (onConnectCallback) onConnectCallback();
-        return;
-      }
+    function initSocket() {
+      if (socket) return; 
+      
       document.getElementById('online-status').innerText = 'З\'єднання...';
-
       socket = io();
 
+      // Ця подія спрацьовує тільки тоді, коли сокет реально підключився до сервера
+      // Вона також спрацює знову, якщо інтернет блимне (реконект)
       socket.on('connect', () => {
-        document.getElementById('online-status').innerText = 'Підключено. Очікуємо суперника...';
-        if (onConnectCallback) onConnectCallback();
+        const username = tg?.initDataUnsafe?.user?.first_name || 'Player';
+        // Сокет ЗАВЖДИ відправляє ту кімнату, яка записана в глобальній змінній myCurrentRoom на момент підключення
+        socket.emit('joinRoom', { roomId: myCurrentRoom, username });
+        document.getElementById('online-status').innerText = `Кімната: ${myCurrentRoom}. Очікування...`;
       });
 
       socket.on('gameStart', () => {
@@ -921,29 +919,50 @@
       });
     }
 
+    // Єдина функція для зміни кімнати
     function joinMatchRoom(roomId) {
-      initSocket(() => {
+      myCurrentRoom = roomId; // Оновлюємо глобальний стан кімнати
+      document.getElementById('my-room-code').innerText = myCurrentRoom; // Відображаємо користувачу
+
+      if (!socket) {
+        // Якщо сокета ще немає, просто створюємо його. Він сам надішле myCurrentRoom при з'єднанні.
+        initSocket(); 
+      } else if (socket.connected) {
+        // Якщо сокет вже був створений і підключений, просто кидаємо подію зміни кімнати
         const username = tg?.initDataUnsafe?.user?.first_name || 'Player';
-        socket.emit('joinRoom', { roomId, username });
-        document.getElementById('online-status').innerText = `Кімната: ${roomId}. Очікування...`;
-      });
+        socket.emit('joinRoom', { roomId: myCurrentRoom, username });
+        document.getElementById('online-status').innerText = `Кімната: ${myCurrentRoom}. Очікування...`;
+      }
     }
 
-    // Підключення по кнопці з поля вводу
+    // --- Обробники кнопок меню ---
+
+    // Введення коду кімнати друга руками
     document.getElementById('btn-join-code').addEventListener('click', () => {
       const code = document.getElementById('join-room-input').value.trim();
       if (!code) return alert('Введіть код кімнати');
       joinMatchRoom(code);
     });
 
-    // Скопіювати свій код
+    // Клік по вкладці "ОНЛАЙН"
+    document.getElementById('tab-online').addEventListener('click', () => {
+      mode = 'online';
+      document.getElementById('tab-online').classList.add('active');
+      document.getElementById('tab-bot').classList.remove('active');
+      document.getElementById('online-box').style.display = 'flex';
+      document.getElementById('status-text').innerText = 'ONLINE MODE';
+      document.getElementById('opponent-title').innerText = 'OPPONENT';
+      joinMatchRoom(myCurrentRoom); // Підключаємось до поточної згенерованої кімнати
+    });
+
+    // Кнопка копіювання
     document.getElementById('btn-copy-code').addEventListener('click', () => {
       navigator.clipboard.writeText(myCurrentRoom);
       document.getElementById('btn-copy-code').innerText = '✅ СКОПІЙОВАНО!';
       setTimeout(() => document.getElementById('btn-copy-code').innerText = '📋 СКОПІЮВАТИ КОД', 2000);
     });
 
-    // Відправити код у чат Telegram
+    // Share Invite
     document.getElementById('btn-share-invite').addEventListener('click', () => {
       joinMatchRoom(myCurrentRoom);
       const shareText = encodeURIComponent(`🎮 Мій код кімнати в Тетріс: ${myCurrentRoom}\nЗаходь у гру, вбивай цей код і граємо!`);
@@ -999,11 +1018,9 @@
           ctx.fillStyle = p.color;
           ctx.globalAlpha = p.life;
           ctx.fillRect(p.x, p.y, p.size, p.size);
-
           p.x += p.vx;
           p.y += p.vy;
           p.life -= p.decay;
-
           if (p.life <= 0) particles.splice(i, 1);
         }
         ctx.restore();
@@ -1097,7 +1114,6 @@
       setMenu(false);
     }
 
-    // --- Обробники кнопок ---
     document.getElementById('btn-pause').addEventListener('click', () => {
       document.getElementById('menu-title').innerText = 'PAUSE // MENU';
       setMenu(true);
@@ -1131,16 +1147,6 @@
       restartGame();
     });
 
-    document.getElementById('tab-online').addEventListener('click', () => {
-      mode = 'online';
-      document.getElementById('tab-online').classList.add('active');
-      document.getElementById('tab-bot').classList.remove('active');
-      document.getElementById('online-box').style.display = 'flex';
-      document.getElementById('status-text').innerText = 'ONLINE MODE';
-      document.getElementById('opponent-title').innerText = 'OPPONENT';
-      joinMatchRoom(myCurrentRoom);
-    });
-
     const soundBtn = document.getElementById('btn-sound');
     soundBtn.addEventListener('click', () => {
       AudioEngine.enabled = !AudioEngine.enabled;
@@ -1161,6 +1167,16 @@
       else if (e.code === 'Space') player.hardDrop();
       else if (e.key === 'Escape') setMenu(!isPaused);
     });
+
+    const startParam = tg?.initDataUnsafe?.start_param;
+    if (startParam) {
+      mode = 'online';
+      document.getElementById('tab-online').classList.add('active');
+      document.getElementById('tab-bot').classList.remove('active');
+      document.getElementById('online-box').style.display = 'flex';
+      document.getElementById('status-text').innerText = 'CONNECTING...';
+      joinMatchRoom(startParam);
+    }
 
     player.resetPiece();
     bot.resetPiece();
